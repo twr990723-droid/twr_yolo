@@ -1,0 +1,8 @@
+facenet-pytorch>=2.5.0
+matplotlib==3.10.0
+opencv-python==4.8.1.78
+
+# Core dependencies
+ultralytics>=8.0.0
+tqdm>=4.66.0
+
