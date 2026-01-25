@@ -54,6 +54,7 @@ models/
 # *.png
 # *.gif
 # *.bmp
+credentials.json
 face_images/
 face_images_with_boxes/
 screenshots/
