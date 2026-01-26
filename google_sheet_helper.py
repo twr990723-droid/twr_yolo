@@ -67,8 +67,19 @@ def log_violation(worksheet, student_id, name, violations):
         date_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
         # 格式化違規內容
-        violation_str = ", ".join([f"{v['class_name']}({v['confidence']:.1%})" 
-                                   for v in violations])
+        # 當辨識類別為0時顯示為合規，其他類別顯示為不合規
+        violations.sort(key=lambda x: x['confidence'], reverse=True)
+        violation_str = "合規" if violations[0]['class_name'] == '0' else "不合規"
+        
+        # violation_items = []
+        # for v in violations:
+        #     # 假設 class_id 或 class_name 為 0 或 "0" 時表示合規
+        #     if v.get('class_id') == 0 or v.get('class_name') == '0':
+        #         violation_items.append("合規")
+        #     else:
+        #         violation_items.append(f"不合規: {v['class_name']}({v['confidence']:.1%})")
+        
+        # violation_str = ", ".join(violation_items)
         
         # 添加記錄
         row = [date_str, student_id, name, violation_str]

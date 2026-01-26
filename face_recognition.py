@@ -300,7 +300,7 @@ class FaceRecognitionSystem:
                                     today = datetime.now().strftime("%Y-%m-%d")
                                     
                                     # 檢查今天是否已經記錄過這個學號
-                                    if student_id in self.daily_records and self.daily_records[student_id] == today:
+                                    if False:#student_id in self.daily_records and self.daily_records[student_id] == today:
                                         print(f"[Google Sheet] {student_id} 今天已記錄過，略過")
                                     else:
                                         # 記錄違規資料

@@ -53,7 +53,6 @@ models/
 # *.gif
 # *.bmp
 credentials.json
-face_images/
 face_images_with_boxes/
 screenshots/
 screenshot_*.jpg
