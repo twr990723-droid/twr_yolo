@@ -33,7 +33,6 @@ venv.bak/
 
 # PyTorch / ML Models
 *.pth
-*.pt
 *.ckpt
 *.h5
 *.pkl
@@ -46,7 +45,6 @@ models/
 *.csv
 *.xlsx
 *.xls
-!face_embeddings_database.csv  # 保留資料庫檔案（如果需要的話，可移除這行）
 
 # Image Files (如果不想上傳影像，取消註解以下行)
 # *.jpg

@@ -17,6 +17,9 @@ import threading
 import queue
 from collections import deque
 import time
+from datetime import datetime
+from ultralytics import YOLO
+from google_sheet_helper import init_google_sheet, log_violation
 
 # 設定參數
 DATABASE_CSV = "face_embeddings_database.csv"
@@ -73,6 +76,7 @@ class FaceRecognitionSystem:
         # 異步處理相關
         self.face_queue = queue.Queue(maxsize=QUEUE_MAX_SIZE)
         self.result_queue = queue.Queue()  # 存放辨識結果的隊列
+        self.yolo_queue = queue.Queue()  # 存放辨識結果的隊列
         self.worker_thread = None
         self.running = False
         self.next_face_id = 0
@@ -80,6 +84,27 @@ class FaceRecognitionSystem:
         # 結果顯示緩存（避免閃爍）
         self.last_result = None  # 緩存最後一次的辨識結果
         self.result_display_duration = 3.0  # 結果顯示 3 秒後過期
+        
+        # 每日記錄追蹤（避免重複記錄）
+        self.daily_records = {}  # 格式: {student_id: "YYYY-MM-DD"}
+        
+        # 初始化 YOLO 模型
+        yolo_model_path = "best.pt"
+        print(f"正在載入 YOLO 模型: {yolo_model_path}")
+        try:
+            self.yolo_model = YOLO(yolo_model_path)
+            print("✓ YOLO 模型載入成功")
+        except Exception as e:
+            print(f"警告: 無法載入 YOLO 模型: {str(e)}")
+            self.yolo_model = None
+        
+        # 初始化 Google Sheet
+        print("正在初始化 Google Sheet...")
+        self.worksheet = init_google_sheet("違規記錄")
+        if self.worksheet:
+            print("✓ Google Sheet 初始化成功")
+        else:
+            print("警告: Google Sheet 初始化失敗，將不會記錄違規資料")
         
         # 載入資料庫
         self.load_database()
@@ -183,6 +208,14 @@ class FaceRecognitionSystem:
         """
         print("✓ 辨識工作線程已啟動")
         
+        # 清理過期的每日記錄（非今天的記錄）
+        today = datetime.now().strftime("%Y-%m-%d")
+        expired_ids = [sid for sid, date in self.daily_records.items() if date != today]
+        for sid in expired_ids:
+            del self.daily_records[sid]
+        if expired_ids:
+            print(f"✓ 已清理 {len(expired_ids)} 筆過期記錄")
+        
         while self.running:
             try:
                 # 從隊列中取出任務 (timeout避免阻塞)
@@ -222,9 +255,72 @@ class FaceRecognitionSystem:
                     }
                     self.result_queue.put(result)
                     
+                    # 如果辨識到當事人，執行 YOLO 物件偵測
+                    if status == "matched" and self.yolo_model is not None:
+                        try:
+                            # 將 PIL Image 轉換為 OpenCV 格式
+                            frame_cv = cv2.cvtColor(np.array(face_img), cv2.COLOR_RGB2BGR)
+                            
+                            # 使用 YOLO 進行物件偵測
+                            yolo_results = self.yolo_model(frame_cv, verbose=False)
+                            
+                            # 取得偵測結果
+                            detections = yolo_results[0].boxes
+                            if len(detections) > 0:
+                                print(f"[YOLO偵測] 偵測到 {len(detections)} 個物件")
+                                
+                                # 準備偵測結果數據
+                                detection_data = []
+                                for idx, det in enumerate(detections):
+                                    cls_id = int(det.cls[0])
+                                    conf = float(det.conf[0])
+                                    class_name = yolo_results[0].names[cls_id]
+                                    box_coords = det.xyxy[0].cpu().numpy()  # [x1, y1, x2, y2]
+                                    
+                                    detection_data.append({
+                                        'class_name': class_name,
+                                        'confidence': conf,
+                                        'box': box_coords
+                                    })
+                                    print(f"  - {class_name}: {conf:.2%}")
+                                
+                                # 將結果放入 yolo_queue
+                                yolo_result = {
+                                    'detections': detection_data,
+                                    'timestamp': time.time()
+                                }
+                                self.yolo_queue.put(yolo_result)
+                                
+                                # 記錄到 Google Sheet
+                                if self.worksheet:
+                                    # 從 match_name 提取學號（去除副檔名）
+                                    student_id = match_name.split('.')[0] if '.' in match_name else match_name
+                                    
+                                    # 獲取今天的日期（UTC+8）
+                                    today = datetime.now().strftime("%Y-%m-%d")
+                                    
+                                    # 檢查今天是否已經記錄過這個學號
+                                    if student_id in self.daily_records and self.daily_records[student_id] == today:
+                                        print(f"[Google Sheet] {student_id} 今天已記錄過，略過")
+                                    else:
+                                        # 記錄違規資料
+                                        success = log_violation(
+                                            worksheet=self.worksheet,
+                                            student_id=student_id,
+                                            name=match_name,
+                                            violations=detection_data
+                                        )
+                                        
+                                        # 如果記錄成功，更新追蹤字典
+                                        if success:
+                                            self.daily_records[student_id] = today
+                                            print(f"[Google Sheet] {student_id} 記錄成功 (今日首次)")
 
-
-
+                            else:
+                                print("[YOLO偵測] 未偵測到物件")
+                                
+                        except Exception as e:
+                            print(f"[YOLO錯誤] {str(e)}")
 
                 else:
                     print(f"[辨識失敗] 無法提取 embedding")
@@ -323,6 +419,65 @@ class FaceRecognitionSystem:
         return frame
 
 
+    def draw_yolo_detections(self, frame):
+        """
+        在畫面上繪製 YOLO 偵測結果
+        從 yolo_queue 取出偵測結果並繪製方框
+        
+        Args:
+            frame: 影像畫面
+            
+        Returns:
+            frame: 繪製後的畫面
+        """
+        # 從 yolo_queue 取出所有待處理的結果（只保留最新的）
+        yolo_data = None
+        while not self.yolo_queue.empty():
+            try:
+                yolo_data = self.yolo_queue.get_nowait()
+            except queue.Empty:
+                break
+        
+        # 如果沒有 YOLO 偵測結果，直接返回
+        if yolo_data is None:
+            return frame
+        
+        # 繪製每個偵測到的物件
+        detections = yolo_data['detections']
+        for det in detections:
+            box = det['box']
+            class_name = det['class_name']
+            conf = det['confidence']
+            
+            # 取得方框座標
+            x1, y1, x2, y2 = [int(coord) for coord in box]
+            
+            # 使用藍色方框表示 YOLO 偵測結果
+            color = (255, 0, 0)  # BGR 格式的藍色
+            
+            # 繪製方框
+            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+            
+            # 繪製標籤
+            label = f"{class_name}: {conf:.2%}"
+            
+            # 計算標籤背景大小
+            (label_width, label_height), baseline = cv2.getTextSize(
+                label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 2
+            )
+            
+            # 繪製標籤背景
+            cv2.rectangle(frame, 
+                         (x1, y1 - label_height - baseline - 5), 
+                         (x1 + label_width, y1), 
+                         color, -1)
+            
+            # 繪製標籤文字
+            cv2.putText(frame, label, (x1, y1 - baseline - 2), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, COLOR_TEXT, 2)
+        
+        return frame
+
     
     def run(self):
         """啟動即時辨識系統 (異步版本)"""
@@ -408,6 +563,9 @@ class FaceRecognitionSystem:
 
                     
                 frame = self.draw_recognition_results(frame)
+                
+                # 繪製 YOLO 偵測方框
+                frame = self.draw_yolo_detections(frame)
 
                 # 顯示畫面（使用命名窗口）
                 cv2.imshow(window_name, frame)
