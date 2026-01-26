@@ -177,7 +177,7 @@ class FaceRecognitionSystem:
         
         return match_name, min_distance
     
-    def recognition_worker(self):
+    def recognition_worker(self): #第二位同學
         """
         工作線程: 從隊列中取出人臉影像,提取embedding並比對
         """
@@ -221,6 +221,11 @@ class FaceRecognitionSystem:
                         'timestamp': time.time()
                     }
                     self.result_queue.put(result)
+                    
+
+
+
+
                 else:
                     print(f"[辨識失敗] 無法提取 embedding")
                 
