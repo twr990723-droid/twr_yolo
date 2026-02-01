@@ -274,6 +274,12 @@ class FaceRecognitionSystem:
                                 for idx, det in enumerate(detections):
                                     cls_id = int(det.cls[0])
                                     conf = float(det.conf[0])
+                                    
+                                    # 過濾信心度低於 0.5 的偵測結果
+                                    if conf <= 0.6:
+                                        print(f"  - 略過信心度過低的偵測 ({conf:.2%})")
+                                        continue
+                                    
                                     class_name = yolo_results[0].names[cls_id]
                                     box_coords = det.xyxy[0].cpu().numpy()  # [x1, y1, x2, y2]
                                     
@@ -284,37 +290,41 @@ class FaceRecognitionSystem:
                                     })
                                     print(f"  - {class_name}: {conf:.2%}")
                                 
-                                # 將結果放入 yolo_queue
-                                yolo_result = {
-                                    'detections': detection_data,
-                                    'timestamp': time.time()
-                                }
-                                self.yolo_queue.put(yolo_result)
-                                
-                                # 記錄到 Google Sheet
-                                if self.worksheet:
-                                    # 從 match_name 提取學號（去除副檔名）
-                                    student_id = match_name.split('.')[0] if '.' in match_name else match_name
+                                # 只有當有有效偵測結果時才進行後續處理
+                                if len(detection_data) > 0:
+                                    # 將結果放入 yolo_queue
+                                    yolo_result = {
+                                        'detections': detection_data,
+                                        'timestamp': time.time()
+                                    }
+                                    self.yolo_queue.put(yolo_result)
                                     
-                                    # 獲取今天的日期（UTC+8）
-                                    today = datetime.now().strftime("%Y-%m-%d")
-                                    
-                                    # 檢查今天是否已經記錄過這個學號
-                                    if False:#student_id in self.daily_records and self.daily_records[student_id] == today:
-                                        print(f"[Google Sheet] {student_id} 今天已記錄過，略過")
-                                    else:
-                                        # 記錄違規資料
-                                        success = log_violation(
-                                            worksheet=self.worksheet,
-                                            student_id=student_id,
-                                            name=match_name,
-                                            violations=detection_data
-                                        )
+                                    # 記錄到 Google Sheet
+                                    if self.worksheet:
+                                        # 從 match_name 提取學號（去除副檔名）
+                                        student_id = match_name.split('.')[0] if '.' in match_name else match_name
                                         
-                                        # 如果記錄成功，更新追蹤字典
-                                        if success:
-                                            self.daily_records[student_id] = today
-                                            print(f"[Google Sheet] {student_id} 記錄成功 (今日首次)")
+                                        # 獲取今天的日期（UTC+8）
+                                        today = datetime.now().strftime("%Y-%m-%d")
+                                        
+                                        # 檢查今天是否已經記錄過這個學號
+                                        if False:#student_id in self.daily_records and self.daily_records[student_id] == today:
+                                            print(f"[Google Sheet] {student_id} 今天已記錄過，略過")
+                                        else:
+                                            # 記錄違規資料
+                                            success = log_violation(
+                                                worksheet=self.worksheet,
+                                                student_id=student_id,
+                                                name=match_name,
+                                                violations=detection_data
+                                            )
+                                            
+                                            # 如果記錄成功，更新追蹤字典
+                                            if success:
+                                                self.daily_records[student_id] = today
+                                                print(f"[Google Sheet] {student_id} 記錄成功 (今日首次)")
+                                else:
+                                    print(f"[YOLO偵測] 沒有信心度 >= 0.5 的偵測結果，略過後續處理")
 
                             else:
                                 print("[YOLO偵測] 未偵測到物件")
